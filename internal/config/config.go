@@ -2,34 +2,36 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 )
 
-// Cluster is one Proxmox VE endpoint to connect to. Most setups have exactly
-// one; LAZYPVE_CLUSTERS_FILE allows listing several.
+// Cluster is one Proxmox VE endpoint to connect to.
 type Cluster struct {
-	// Name identifies this cluster in the UI. Must be unique across clusters.
-	Name string `json:"name"`
+	// Name identifies this cluster in the UI.
+	Name string
 	// Host is the Proxmox API endpoint, e.g. "https://192.168.1.10:8006".
-	Host string `json:"host"`
+	Host string
 	// TokenID is the full API token identifier, e.g. "root@pam!lazypve".
-	TokenID string `json:"token_id"`
+	TokenID string
 	// TokenSecret is the token's UUID secret.
-	TokenSecret string `json:"token_secret"`
+	TokenSecret string
 	// InsecureSkipVerify disables TLS certificate verification, needed for
 	// Proxmox's default self-signed certificate.
-	InsecureSkipVerify bool `json:"insecure_skip_verify"`
+	InsecureSkipVerify bool
 }
 
-// Load returns the clusters lazypve should connect to. If LAZYPVE_CLUSTERS_FILE
-// is set, clusters are read from that JSON file. Otherwise a single cluster is
-// built from LAZYPVE_HOST/LAZYPVE_TOKEN_ID/LAZYPVE_TOKEN_SECRET/LAZYPVE_INSECURE_SKIP_VERIFY
-// (and optionally LAZYPVE_NAME), matching the original single-cluster setup.
+// Load returns the clusters lazypve should connect to.
+//
+// If LAZYPVE_CLUSTER1_HOST is set, clusters are read as a numbered list —
+// LAZYPVE_CLUSTER1_*, LAZYPVE_CLUSTER2_*, and so on — stopping at the first
+// missing number. Otherwise a single cluster is built from the unnumbered
+// LAZYPVE_HOST/LAZYPVE_TOKEN_ID/LAZYPVE_TOKEN_SECRET/LAZYPVE_INSECURE_SKIP_VERIFY
+// vars (optionally named via LAZYPVE_NAME, defaulting to "default").
 func Load() ([]Cluster, error) {
-	if path := os.Getenv("LAZYPVE_CLUSTERS_FILE"); path != "" {
-		return loadFromFile(path)
+	if os.Getenv("LAZYPVE_CLUSTER1_HOST") != "" {
+		return loadNumberedFromEnv()
 	}
 	return loadSingleFromEnv()
 }
@@ -40,55 +42,64 @@ func loadSingleFromEnv() ([]Cluster, error) {
 		name = "default"
 	}
 
+	c, err := clusterFromEnv(name, "LAZYPVE_")
+	if err != nil {
+		return nil, err
+	}
+	return []Cluster{c}, nil
+}
+
+func loadNumberedFromEnv() ([]Cluster, error) {
+	var clusters []Cluster
+	for i := 1; ; i++ {
+		prefix := "LAZYPVE_CLUSTER" + strconv.Itoa(i) + "_"
+		if os.Getenv(prefix+"HOST") == "" {
+			break
+		}
+
+		name := os.Getenv(prefix + "NAME")
+		if name == "" {
+			name = "cluster" + strconv.Itoa(i)
+		}
+
+		c, err := clusterFromEnv(name, prefix)
+		if err != nil {
+			return nil, err
+		}
+		clusters = append(clusters, c)
+	}
+	return clusters, nil
+}
+
+// clusterFromEnv reads HOST/TOKEN_ID/TOKEN_SECRET/INSECURE_SKIP_VERIFY under
+// the given env var prefix (e.g. "LAZYPVE_" or "LAZYPVE_CLUSTER2_").
+func clusterFromEnv(name, prefix string) (Cluster, error) {
+	hostVar := prefix + "HOST"
+	tokenIDVar := prefix + "TOKEN_ID"
+	tokenSecretVar := prefix + "TOKEN_SECRET"
+	insecureVar := prefix + "INSECURE_SKIP_VERIFY"
+
 	c := Cluster{
 		Name:               name,
-		Host:               os.Getenv("LAZYPVE_HOST"),
-		TokenID:            os.Getenv("LAZYPVE_TOKEN_ID"),
-		TokenSecret:        os.Getenv("LAZYPVE_TOKEN_SECRET"),
-		InsecureSkipVerify: os.Getenv("LAZYPVE_INSECURE_SKIP_VERIFY") == "true",
+		Host:               os.Getenv(hostVar),
+		TokenID:            os.Getenv(tokenIDVar),
+		TokenSecret:        os.Getenv(tokenSecretVar),
+		InsecureSkipVerify: os.Getenv(insecureVar) == "true",
 	}
 
 	var missing []string
 	if c.Host == "" {
-		missing = append(missing, "LAZYPVE_HOST")
+		missing = append(missing, hostVar)
 	}
 	if c.TokenID == "" {
-		missing = append(missing, "LAZYPVE_TOKEN_ID")
+		missing = append(missing, tokenIDVar)
 	}
 	if c.TokenSecret == "" {
-		missing = append(missing, "LAZYPVE_TOKEN_SECRET")
+		missing = append(missing, tokenSecretVar)
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("missing required environment variables: %v", missing)
+		return Cluster{}, fmt.Errorf("missing required environment variables: %v", missing)
 	}
 
-	return []Cluster{c}, nil
-}
-
-func loadFromFile(path string) ([]Cluster, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
-	}
-
-	var clusters []Cluster
-	if err := json.Unmarshal(data, &clusters); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
-	}
-	if len(clusters) == 0 {
-		return nil, fmt.Errorf("%s defines no clusters", path)
-	}
-
-	seen := make(map[string]bool, len(clusters))
-	for _, c := range clusters {
-		if c.Name == "" {
-			return nil, fmt.Errorf("%s: cluster with empty name", path)
-		}
-		if seen[c.Name] {
-			return nil, fmt.Errorf("%s: duplicate cluster name %q", path, c.Name)
-		}
-		seen[c.Name] = true
-	}
-
-	return clusters, nil
+	return c, nil
 }

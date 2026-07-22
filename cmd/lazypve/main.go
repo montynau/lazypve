@@ -20,7 +20,7 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lazypve: "+err.Error())
 		fmt.Fprintln(os.Stderr, "set LAZYPVE_HOST, LAZYPVE_TOKEN_ID, LAZYPVE_TOKEN_SECRET (and optionally LAZYPVE_INSECURE_SKIP_VERIFY=true),")
-		fmt.Fprintln(os.Stderr, "or set LAZYPVE_CLUSTERS_FILE to a JSON file listing multiple clusters")
+		fmt.Fprintln(os.Stderr, "or, for multiple clusters, LAZYPVE_CLUSTER1_HOST/_TOKEN_ID/_TOKEN_SECRET, LAZYPVE_CLUSTER2_..., and so on")
 		os.Exit(1)
 	}
 

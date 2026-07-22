@@ -47,26 +47,23 @@ lazypve authenticates with a Proxmox API token rather than a username/password, 
 
 ### Multiple clusters
 
-If you manage more than one Proxmox cluster, repeat the token setup above for each, then copy `clusters.example.json` to `clusters.json` and list them there instead of using `.env`:
+If you manage more than one Proxmox cluster, repeat the token setup above for each, then list them in `.env` as a numbered set instead of the plain `LAZYPVE_*` vars:
 
-```sh
-cp clusters.example.json clusters.json
+```env
+LAZYPVE_CLUSTER1_NAME=homelab
+LAZYPVE_CLUSTER1_HOST=https://192.168.1.10:8006
+LAZYPVE_CLUSTER1_TOKEN_ID=root@pam!lazypve
+LAZYPVE_CLUSTER1_TOKEN_SECRET=...
+LAZYPVE_CLUSTER1_INSECURE_SKIP_VERIFY=true
+
+LAZYPVE_CLUSTER2_NAME=work
+LAZYPVE_CLUSTER2_HOST=https://10.0.0.5:8006
+LAZYPVE_CLUSTER2_TOKEN_ID=root@pam!lazypve
+LAZYPVE_CLUSTER2_TOKEN_SECRET=...
+LAZYPVE_CLUSTER2_INSECURE_SKIP_VERIFY=true
 ```
 
-```json
-[
-  { "name": "homelab", "host": "https://192.168.1.10:8006", "token_id": "root@pam!lazypve", "token_secret": "...", "insecure_skip_verify": true },
-  { "name": "work",    "host": "https://10.0.0.5:8006",     "token_id": "root@pam!lazypve", "token_secret": "...", "insecure_skip_verify": true }
-]
-```
-
-Then point lazypve at it:
-
-```sh
-LAZYPVE_CLUSTERS_FILE=clusters.json go run ./cmd/lazypve
-```
-
-Every table gains a `CLUSTER` column, and drill-down filters by cluster + node together (so two clusters can safely have a node with the same name).
+Add `LAZYPVE_CLUSTER3_*`, etc. for more — lazypve reads `LAZYPVE_CLUSTER1_*`, `LAZYPVE_CLUSTER2_*`, ... and stops at the first missing number. Every table then gains a `CLUSTER` column, and drill-down filters by cluster + node together (so two clusters can safely have a node with the same name).
 
 ## Usage
 
