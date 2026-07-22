@@ -124,7 +124,7 @@ func (m Model) renderNodes() string {
 		return "no nodes found"
 	}
 
-	header := headerStyle.Render(fmt.Sprintf("%-16s %-10s %6s %8s %8s", "NODE", "STATUS", "CPU%", "MEM", "MAXMEM"))
+	header := headerStyle.Render(fmt.Sprintf("%-16s %-10s %6s %8s %8s %10s", "NODE", "STATUS", "CPU%", "MEM", "MAXMEM", "UPTIME"))
 	lines := []string{header}
 
 	for _, n := range m.nodes {
@@ -132,12 +132,13 @@ func (m Model) renderNodes() string {
 		if n.Status == "online" {
 			statusStyle = statusOnlineStyle
 		}
-		line := fmt.Sprintf("%-16s %s %5.1f%% %8s %8s",
+		line := fmt.Sprintf("%-16s %s %5.1f%% %8s %8s %10s",
 			n.Node,
 			statusStyle.Render(fmt.Sprintf("%-10s", n.Status)),
 			n.CPU*100,
 			formatBytes(n.Mem),
 			formatBytes(n.MaxMem),
+			formatUptime(n.Uptime),
 		)
 		lines = append(lines, line)
 	}
