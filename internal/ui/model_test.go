@@ -58,12 +58,15 @@ func TestDrillDownFlow(t *testing.T) {
 	if got := len(m.guestsTable.Rows()); got != 3 {
 		t.Fatalf("expected 3 guest rows after clearing filter, got %d", got)
 	}
+	if !m.nodesTable.Focused() {
+		t.Fatal("expected esc to move focus back to nodes table, mirroring enter")
+	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(Model)
 
-	if !m.nodesTable.Focused() {
-		t.Fatal("expected tab to move focus back to nodes table")
+	if !m.guestsTable.Focused() {
+		t.Fatal("expected tab to move focus to guests table")
 	}
 }
 

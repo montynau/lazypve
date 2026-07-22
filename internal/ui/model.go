@@ -188,6 +188,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected = nodeKey{}
 				m.nodesTable.SetRows(nodeRows(m.nodes, m.selected, m.multiCluster()))
 				m.guestsTable.SetRows(guestRows(m.guests, m.selected, m.multiCluster()))
+				if m.focus == focusGuests {
+					m.toggleFocus()
+				}
 			}
 			return m, nil
 		}
