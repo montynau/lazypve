@@ -3,6 +3,7 @@ package ui
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -43,18 +44,37 @@ const (
 	focusGuests
 )
 
-type nodesMsg []pve.Node
+// node is a pve.Node tagged with which cluster it came from, since lazypve
+// can poll several clusters at once.
+type node struct {
+	Cluster string
+	Node    string
+	Status  string
+	CPU     float64
+	Mem     int64
+	MaxMem  int64
+	Uptime  int64
+}
+
+// nodeKey identifies a single node across clusters (node names are only
+// unique within a cluster, not globally).
+type nodeKey struct {
+	Cluster string
+	Node    string
+}
+
+type nodesMsg []node
 type errMsg struct{ err error }
 type tickMsg time.Time
 
 type Model struct {
-	client *pve.Client
+	clients map[string]*pve.Client
 
 	width, height int
 
-	nodes        []pve.Node
-	guests       []guest
-	selectedNode string // "" = no filter, guests table shows every guest
+	nodes    []node
+	guests   []guest
+	selected nodeKey // zero value = no drill-down filter
 
 	nodesTable  table.Model
 	guestsTable table.Model
@@ -64,19 +84,20 @@ type Model struct {
 	loading bool
 }
 
-func New(client *pve.Client) Model {
+func New(clients map[string]*pve.Client) Model {
+	multi := len(clients) > 1
 	nodesTable := table.New(
-		table.WithColumns(nodeColumns()),
+		table.WithColumns(nodeColumns(multi)),
 		table.WithFocused(true),
 		table.WithHeight(6),
 	)
 	guestsTable := table.New(
-		table.WithColumns(guestColumns()),
+		table.WithColumns(guestColumns(multi)),
 		table.WithHeight(10),
 	)
 
 	return Model{
-		client:      client,
+		clients:     clients,
 		loading:     true,
 		nodesTable:  nodesTable,
 		guestsTable: guestsTable,
@@ -84,21 +105,45 @@ func New(client *pve.Client) Model {
 	}
 }
 
+func (m Model) multiCluster() bool {
+	return len(m.clients) > 1
+}
+
 func (m Model) Init() tea.Cmd {
 	return m.fetchNodes()
 }
 
 func (m Model) fetchNodes() tea.Cmd {
+	clients := m.clients
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		nodes, err := m.client.GetNodes(ctx)
-		if err != nil {
-			return errMsg{err}
+		var nodes []node
+		var errs []error
+		for name, client := range clients {
+			raw, err := client.GetNodes(ctx)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", name, err))
+				continue
+			}
+			for _, n := range raw {
+				nodes = append(nodes, node{
+					Cluster: name, Node: n.Node, Status: n.Status,
+					CPU: n.CPU, Mem: n.Mem, MaxMem: n.MaxMem, Uptime: n.Uptime,
+				})
+			}
 		}
-		slices.SortFunc(nodes, func(a, b pve.Node) int {
-			return cmp.Compare(a.Node, b.Node)
+
+		if len(nodes) == 0 && len(errs) > 0 {
+			return errMsg{errors.Join(errs...)}
+		}
+
+		slices.SortFunc(nodes, func(a, b node) int {
+			return cmp.Or(
+				cmp.Compare(a.Cluster, b.Cluster),
+				cmp.Compare(a.Node, b.Node),
+			)
 		})
 		return nodesMsg(nodes)
 	}
@@ -129,19 +174,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.focus == focusNodes {
 				if idx := m.nodesTable.Cursor(); idx >= 0 && idx < len(m.nodes) {
-					m.selectedNode = m.nodes[idx].Node
-					m.nodesTable.SetRows(nodeRows(m.nodes, m.selectedNode))
-					m.guestsTable.SetRows(guestRows(m.guests, m.selectedNode))
+					n := m.nodes[idx]
+					m.selected = nodeKey{Cluster: n.Cluster, Node: n.Node}
+					m.nodesTable.SetRows(nodeRows(m.nodes, m.selected, m.multiCluster()))
+					m.guestsTable.SetRows(guestRows(m.guests, m.selected, m.multiCluster()))
 					m.toggleFocus()
 				}
 			}
 			return m, nil
 
 		case "esc":
-			if m.selectedNode != "" {
-				m.selectedNode = ""
-				m.nodesTable.SetRows(nodeRows(m.nodes, m.selectedNode))
-				m.guestsTable.SetRows(guestRows(m.guests, m.selectedNode))
+			if m.selected.Node != "" {
+				m.selected = nodeKey{}
+				m.nodesTable.SetRows(nodeRows(m.nodes, m.selected, m.multiCluster()))
+				m.guestsTable.SetRows(guestRows(m.guests, m.selected, m.multiCluster()))
 			}
 			return m, nil
 		}
@@ -156,13 +202,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nodes = msg
 		m.err = nil
 		m.loading = false
-		m.nodesTable.SetRows(nodeRows(m.nodes, m.selectedNode))
+		m.nodesTable.SetRows(nodeRows(m.nodes, m.selected, m.multiCluster()))
 		m.resizeTables()
 		return m, m.fetchGuests()
 
 	case guestsMsg:
 		m.guests = msg
-		m.guestsTable.SetRows(guestRows(m.guests, m.selectedNode))
+		m.guestsTable.SetRows(guestRows(m.guests, m.selected, m.multiCluster()))
 		m.resizeTables()
 		return m, tick()
 
@@ -230,8 +276,12 @@ func (m Model) View() string {
 	nodesLabel := "Nodes"
 	shown := len(m.guestsTable.Rows())
 	guestsLabel := fmt.Sprintf("Guests — %d", shown)
-	if m.selectedNode != "" {
-		guestsLabel = fmt.Sprintf("Guests — %d of %d, filtered to node %q", shown, len(m.guests), m.selectedNode)
+	if m.selected.Node != "" {
+		if m.multiCluster() {
+			guestsLabel = fmt.Sprintf("Guests — %d of %d, filtered to node %q on cluster %q", shown, len(m.guests), m.selected.Node, m.selected.Cluster)
+		} else {
+			guestsLabel = fmt.Sprintf("Guests — %d of %d, filtered to node %q", shown, len(m.guests), m.selected.Node)
+		}
 	}
 	if m.focus == focusNodes {
 		nodesLabel = activeLabelStyle.Render(nodesLabel)
@@ -254,42 +304,51 @@ func (m Model) helpText() string {
 	if m.focus == focusNodes {
 		parts = append(parts, "enter: filter by node")
 	}
-	if m.selectedNode != "" {
+	if m.selected.Node != "" {
 		parts = append(parts, "esc: show all guests")
 	}
 	parts = append(parts, "q: quit")
 	return strings.Join(parts, "  ")
 }
 
-func nodeColumns() []table.Column {
-	return []table.Column{
-		{Title: "NODE", Width: 16},
-		{Title: "STATUS", Width: 9},
-		{Title: "CPU%", Width: 5},
-		{Title: "MEM", Width: 8},
-		{Title: "MAXMEM", Width: 8},
-		{Title: "UPTIME", Width: 9},
+func nodeColumns(multiCluster bool) []table.Column {
+	cols := []table.Column{}
+	if multiCluster {
+		cols = append(cols, table.Column{Title: "CLUSTER", Width: 12})
 	}
+	return append(cols,
+		table.Column{Title: "NODE", Width: 16},
+		table.Column{Title: "STATUS", Width: 9},
+		table.Column{Title: "CPU%", Width: 5},
+		table.Column{Title: "MEM", Width: 8},
+		table.Column{Title: "MAXMEM", Width: 8},
+		table.Column{Title: "UPTIME", Width: 9},
+	)
 }
 
 // nodeRows marks the currently filtered node (if any) with a leading arrow,
 // so the drill-down filter is visible in the nodes table too, not just the
 // guests section label.
-func nodeRows(nodes []pve.Node, selectedNode string) []table.Row {
+func nodeRows(nodes []node, selected nodeKey, multiCluster bool) []table.Row {
 	rows := make([]table.Row, 0, len(nodes))
 	for _, n := range nodes {
 		name := "  " + n.Node
-		if n.Node == selectedNode {
+		if n.Cluster == selected.Cluster && n.Node == selected.Node {
 			name = "▶ " + n.Node
 		}
-		rows = append(rows, table.Row{
+		row := table.Row{}
+		if multiCluster {
+			row = append(row, n.Cluster)
+		}
+		row = append(row,
 			name,
 			n.Status,
 			fmt.Sprintf("%.1f%%", n.CPU*100),
 			formatBytes(n.Mem),
 			formatBytes(n.MaxMem),
 			formatUptime(n.Uptime),
-		})
+		)
+		rows = append(rows, row)
 	}
 	return rows
 }

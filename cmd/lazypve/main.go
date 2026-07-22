@@ -16,16 +16,20 @@ func main() {
 	// .env is optional — ignore if it doesn't exist, real env vars still work.
 	_ = godotenv.Load()
 
-	cfg, err := config.Load()
+	clusters, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lazypve: "+err.Error())
-		fmt.Fprintln(os.Stderr, "set LAZYPVE_HOST, LAZYPVE_TOKEN_ID, LAZYPVE_TOKEN_SECRET (and optionally LAZYPVE_INSECURE_SKIP_VERIFY=true)")
+		fmt.Fprintln(os.Stderr, "set LAZYPVE_HOST, LAZYPVE_TOKEN_ID, LAZYPVE_TOKEN_SECRET (and optionally LAZYPVE_INSECURE_SKIP_VERIFY=true),")
+		fmt.Fprintln(os.Stderr, "or set LAZYPVE_CLUSTERS_FILE to a JSON file listing multiple clusters")
 		os.Exit(1)
 	}
 
-	client := pve.NewClient(cfg)
+	clients := make(map[string]*pve.Client, len(clusters))
+	for _, c := range clusters {
+		clients[c.Name] = pve.NewClient(c)
+	}
 
-	p := tea.NewProgram(ui.New(client), tea.WithAltScreen())
+	p := tea.NewProgram(ui.New(clients), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "lazypve: "+err.Error())
 		os.Exit(1)

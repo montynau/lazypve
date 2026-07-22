@@ -19,15 +19,15 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func NewClient(cfg config.Config) *Client {
-	host := strings.TrimRight(cfg.Host, "/")
+func NewClient(cluster config.Cluster) *Client {
+	host := strings.TrimRight(cluster.Host, "/")
 
 	return &Client{
 		host:       host,
-		authHeader: fmt.Sprintf("PVEAPIToken=%s=%s", cfg.TokenID, cfg.TokenSecret),
+		authHeader: fmt.Sprintf("PVEAPIToken=%s=%s", cluster.TokenID, cluster.TokenSecret),
 		httpClient: &http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.InsecureSkipVerify}, //nolint:gosec // opt-in for PVE's default self-signed cert
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: cluster.InsecureSkipVerify}, //nolint:gosec // opt-in for PVE's default self-signed cert
 			},
 		},
 	}
