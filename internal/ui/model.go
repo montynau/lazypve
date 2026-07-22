@@ -127,8 +127,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "enter":
 			if m.focus == focusNodes {
-				if row := m.nodesTable.SelectedRow(); row != nil {
-					m.selectedNode = row[0]
+				if idx := m.nodesTable.Cursor(); idx >= 0 && idx < len(m.nodes) {
+					m.selectedNode = m.nodes[idx].Node
+					m.nodesTable.SetRows(nodeRows(m.nodes, m.selectedNode))
 					m.guestsTable.SetRows(guestRows(m.guests, m.selectedNode))
 					m.toggleFocus()
 				}
@@ -138,6 +139,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.selectedNode != "" {
 				m.selectedNode = ""
+				m.nodesTable.SetRows(nodeRows(m.nodes, m.selectedNode))
 				m.guestsTable.SetRows(guestRows(m.guests, m.selectedNode))
 			}
 			return m, nil
@@ -153,7 +155,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nodes = msg
 		m.err = nil
 		m.loading = false
-		m.nodesTable.SetRows(nodeRows(m.nodes))
+		m.nodesTable.SetRows(nodeRows(m.nodes, m.selectedNode))
 		m.resizeTables()
 		return m, m.fetchGuests()
 
@@ -215,7 +217,7 @@ func clamp(v, lo, hi int) int {
 
 func (m Model) View() string {
 	title := titleStyle.Render("lazypve")
-	help := helpStyle.Render("tab: switch  enter: drill down  esc: clear filter  q: quit")
+	help := helpStyle.Render("tab: switch  enter: filter by node  esc: show all guests  q: quit")
 
 	if m.loading {
 		return title + "\n\nconnecting to Proxmox...\n\n" + help
@@ -225,9 +227,10 @@ func (m Model) View() string {
 	}
 
 	nodesLabel := "Nodes"
-	guestsLabel := "Guests"
+	shown := len(m.guestsTable.Rows())
+	guestsLabel := fmt.Sprintf("Guests — %d", shown)
 	if m.selectedNode != "" {
-		guestsLabel = fmt.Sprintf("Guests (node: %s)", m.selectedNode)
+		guestsLabel = fmt.Sprintf("Guests — %d of %d, filtered to node %q", shown, len(m.guests), m.selectedNode)
 	}
 	if m.focus == focusNodes {
 		nodesLabel = activeLabelStyle.Render(nodesLabel)
@@ -253,11 +256,18 @@ func nodeColumns() []table.Column {
 	}
 }
 
-func nodeRows(nodes []pve.Node) []table.Row {
+// nodeRows marks the currently filtered node (if any) with a leading arrow,
+// so the drill-down filter is visible in the nodes table too, not just the
+// guests section label.
+func nodeRows(nodes []pve.Node, selectedNode string) []table.Row {
 	rows := make([]table.Row, 0, len(nodes))
 	for _, n := range nodes {
+		name := "  " + n.Node
+		if n.Node == selectedNode {
+			name = "▶ " + n.Node
+		}
 		rows = append(rows, table.Row{
-			n.Node,
+			name,
 			n.Status,
 			fmt.Sprintf("%.1f%%", n.CPU*100),
 			formatBytes(n.Mem),
