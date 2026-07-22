@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -217,7 +218,7 @@ func clamp(v, lo, hi int) int {
 
 func (m Model) View() string {
 	title := titleStyle.Render("lazypve")
-	help := helpStyle.Render("tab: switch  enter: filter by node  esc: show all guests  q: quit")
+	help := helpStyle.Render(m.helpText())
 
 	if m.loading {
 		return title + "\n\nconnecting to Proxmox...\n\n" + help
@@ -243,6 +244,21 @@ func (m Model) View() string {
 	body := nodesLabel + "\n" + m.nodesTable.View() + "\n\n" + guestsLabel + "\n" + m.guestsTable.View()
 
 	return title + "\n\n" + body + "\n\n" + help
+}
+
+// helpText only lists actions that would actually do something right now:
+// "enter" only applies while the nodes table is focused, "esc" only applies
+// while a node filter is active.
+func (m Model) helpText() string {
+	parts := []string{"tab: switch"}
+	if m.focus == focusNodes {
+		parts = append(parts, "enter: filter by node")
+	}
+	if m.selectedNode != "" {
+		parts = append(parts, "esc: show all guests")
+	}
+	parts = append(parts, "q: quit")
+	return strings.Join(parts, "  ")
 }
 
 func nodeColumns() []table.Column {
