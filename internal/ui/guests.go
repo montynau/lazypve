@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -53,6 +55,17 @@ func (m Model) fetchGuests() tea.Cmd {
 				}
 			}
 		}
+
+		// Proxmox doesn't guarantee a stable order between requests, so sort
+		// here to keep rows from jumping around on every refresh.
+		slices.SortFunc(guests, func(a, b guest) int {
+			return cmp.Or(
+				cmp.Compare(a.Node, b.Node),
+				cmp.Compare(a.Kind, b.Kind),
+				cmp.Compare(a.VMID, b.VMID),
+			)
+		})
+
 		return guestsMsg(guests)
 	}
 }

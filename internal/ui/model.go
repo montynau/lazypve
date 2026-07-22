@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -63,6 +65,9 @@ func (m Model) fetchNodes() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
+		slices.SortFunc(nodes, func(a, b pve.Node) int {
+			return cmp.Compare(a.Node, b.Node)
+		})
 		return nodesMsg(nodes)
 	}
 }
