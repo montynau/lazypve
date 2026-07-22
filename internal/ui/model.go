@@ -37,6 +37,22 @@ var (
 				Foreground(lipgloss.Color("240"))
 )
 
+// bubbles/table always highlights whatever row the cursor sits on, even when
+// the table isn't focused — which looks like two rows are "selected" at
+// once. We swap in a no-op Selected style for the blurred table so only the
+// focused table's cursor row stands out.
+func activeTableStyles() table.Styles {
+	s := table.DefaultStyles()
+	s.Selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	return s
+}
+
+func inactiveTableStyles() table.Styles {
+	s := table.DefaultStyles()
+	s.Selected = s.Cell
+	return s
+}
+
 type focusArea int
 
 const (
@@ -90,10 +106,12 @@ func New(clients map[string]*pve.Client) Model {
 		table.WithColumns(nodeColumns(multi)),
 		table.WithFocused(true),
 		table.WithHeight(6),
+		table.WithStyles(activeTableStyles()),
 	)
 	guestsTable := table.New(
 		table.WithColumns(guestColumns(multi)),
 		table.WithHeight(10),
+		table.WithStyles(inactiveTableStyles()),
 	)
 
 	return Model{
@@ -231,11 +249,15 @@ func (m *Model) toggleFocus() {
 	if m.focus == focusNodes {
 		m.focus = focusGuests
 		m.nodesTable.Blur()
+		m.nodesTable.SetStyles(inactiveTableStyles())
 		m.guestsTable.Focus()
+		m.guestsTable.SetStyles(activeTableStyles())
 	} else {
 		m.focus = focusNodes
 		m.guestsTable.Blur()
+		m.guestsTable.SetStyles(inactiveTableStyles())
 		m.nodesTable.Focus()
+		m.nodesTable.SetStyles(activeTableStyles())
 	}
 }
 
