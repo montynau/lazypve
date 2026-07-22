@@ -1,0 +1,9 @@
+/lazypve
+*.test
+*.out
+.DS_Store
+.env
+
+# Claude Code
+CLAUDE.md
+.claude/
