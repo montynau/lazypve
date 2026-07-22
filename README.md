@@ -10,7 +10,7 @@ It's read-only by design for now: lazypve won't start, stop, or touch anything o
 
 ## Status
 
-Early days. Currently shows live node status (CPU%, memory) for a single cluster. VM/LXC-level views and richer navigation are next — see [Roadmap](#roadmap).
+Early days. Currently shows live node status and a full VM/LXC listing (CPU%, memory, uptime) for a single cluster. Richer navigation is next — see [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -58,7 +58,7 @@ Press `q` to quit.
 ## Roadmap
 
 - [x] Node status, CPU, memory (live)
-- [ ] VM and LXC listing per node
+- [x] VM and LXC listing per node
 - [ ] Drill-down / navigation between nodes and guests
 - [ ] Disk and network I/O metrics
 - [ ] Multi-cluster support

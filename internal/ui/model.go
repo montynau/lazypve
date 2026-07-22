@@ -41,6 +41,7 @@ type Model struct {
 
 	width, height int
 	nodes         []pve.Node
+	guests        []guest
 	err           error
 	loading       bool
 }
@@ -88,6 +89,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nodes = msg
 		m.err = nil
 		m.loading = false
+		return m, m.fetchGuests()
+
+	case guestsMsg:
+		m.guests = msg
 		return m, tick()
 
 	case errMsg:
@@ -113,7 +118,7 @@ func (m Model) View() string {
 	case m.err != nil:
 		body = errStyle.Render("error: " + m.err.Error())
 	default:
-		body = m.renderNodes()
+		body = m.renderNodes() + "\n\n" + m.renderGuests()
 	}
 
 	return title + "\n\n" + body + "\n\n" + help
