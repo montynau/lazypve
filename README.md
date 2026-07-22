@@ -53,14 +53,14 @@ go run ./cmd/lazypve
 ./lazypve
 ```
 
-Press `q` to quit.
+`tab` switches focus between the nodes and guests tables, `↑`/`↓` (or `j`/`k`) move the selection, `enter` drills into the selected node's guests, `esc` clears that filter, `q` quits.
 
 ## Roadmap
 
 - [x] Node status, CPU, memory (live)
 - [x] VM and LXC listing per node
-- [ ] Drill-down / navigation between nodes and guests
-- [x] Disk and network I/O metrics (VM/LXC)
+- [x] Drill-down / navigation between nodes and guests
+- [x] Disk and network I/O metrics (VM/LXC, cumulative totals — not live throughput yet)
 - [ ] Multi-cluster support
 
 Start/stop/restart control is intentionally out of scope until the monitoring core is solid.

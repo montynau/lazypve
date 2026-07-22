@@ -7,12 +7,12 @@ import (
 	"slices"
 	"time"
 
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// guest is a unified view over pve.VM and pve.Container, since the node
-// table displays them the same way and only needs to know Kind to tell
-// them apart.
+// guest is a unified view over pve.VM and pve.Container, since the guest
+// table displays them the same way and only needs Kind to tell them apart.
 type guest struct {
 	Node    string
 	VMID    int
@@ -78,39 +78,43 @@ func (m Model) fetchGuests() tea.Cmd {
 	}
 }
 
-func (m Model) renderGuests() string {
-	if len(m.guests) == 0 {
-		return "no VMs or containers found"
+func guestColumns() []table.Column {
+	return []table.Column{
+		{Title: "NODE", Width: 14},
+		{Title: "TYPE", Width: 4},
+		{Title: "VMID", Width: 5},
+		{Title: "NAME", Width: 16},
+		{Title: "STATUS", Width: 9},
+		{Title: "CPU%", Width: 5},
+		{Title: "MEM", Width: 8},
+		{Title: "DISK", Width: 8},
+		{Title: "NET IN", Width: 9},
+		{Title: "NET OUT", Width: 9},
+		{Title: "UPTIME", Width: 9},
 	}
+}
 
-	header := headerStyle.Render(fmt.Sprintf("%-16s %-6s %-6s %-16s %-10s %6s %8s %8s %10s %10s %10s",
-		"NODE", "TYPE", "VMID", "NAME", "STATUS", "CPU%", "MEM", "DISK", "NET IN", "NET OUT", "UPTIME"))
-	lines := []string{header}
-
-	for _, g := range m.guests {
-		statusStyle := statusOtherStyle
-		if g.Status == "running" {
-			statusStyle = statusOnlineStyle
+// guestRows builds table rows from guests, optionally restricted to a single
+// node (drill-down). An empty filterNode means "show every guest".
+func guestRows(guests []guest, filterNode string) []table.Row {
+	rows := make([]table.Row, 0, len(guests))
+	for _, g := range guests {
+		if filterNode != "" && g.Node != filterNode {
+			continue
 		}
-		line := fmt.Sprintf("%-16s %-6s %-6d %-16s %s %5.1f%% %8s %8s %10s %10s %10s",
+		rows = append(rows, table.Row{
 			g.Node,
 			g.Kind,
-			g.VMID,
+			fmt.Sprintf("%d", g.VMID),
 			g.Name,
-			statusStyle.Render(fmt.Sprintf("%-10s", g.Status)),
-			g.CPU*100,
+			g.Status,
+			fmt.Sprintf("%.1f%%", g.CPU*100),
 			formatBytes(g.Mem),
 			formatBytes(g.Disk),
 			formatBytes(g.NetIn),
 			formatBytes(g.NetOut),
 			formatUptime(g.Uptime),
-		)
-		lines = append(lines, line)
+		})
 	}
-
-	out := lines[0]
-	for _, l := range lines[1:] {
-		out += "\n" + l
-	}
-	return out
+	return rows
 }

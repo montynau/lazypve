@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -26,12 +27,19 @@ var (
 	errStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("196"))
 
-	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("245"))
+	activeLabelStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("205"))
 
-	statusOnlineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	statusOtherStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	inactiveLabelStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240"))
+)
+
+type focusArea int
+
+const (
+	focusNodes focusArea = iota
+	focusGuests
 )
 
 type nodesMsg []pve.Node
@@ -42,14 +50,37 @@ type Model struct {
 	client *pve.Client
 
 	width, height int
-	nodes         []pve.Node
-	guests        []guest
-	err           error
-	loading       bool
+
+	nodes        []pve.Node
+	guests       []guest
+	selectedNode string // "" = no filter, guests table shows every guest
+
+	nodesTable  table.Model
+	guestsTable table.Model
+	focus       focusArea
+
+	err     error
+	loading bool
 }
 
 func New(client *pve.Client) Model {
-	return Model{client: client, loading: true}
+	nodesTable := table.New(
+		table.WithColumns(nodeColumns()),
+		table.WithFocused(true),
+		table.WithHeight(6),
+	)
+	guestsTable := table.New(
+		table.WithColumns(guestColumns()),
+		table.WithHeight(10),
+	)
+
+	return Model{
+		client:      client,
+		loading:     true,
+		nodesTable:  nodesTable,
+		guestsTable: guestsTable,
+		focus:       focusNodes,
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -83,21 +114,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.resizeTables()
 
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+
+		case "tab":
+			m.toggleFocus()
+			return m, nil
+
+		case "enter":
+			if m.focus == focusNodes {
+				if row := m.nodesTable.SelectedRow(); row != nil {
+					m.selectedNode = row[0]
+					m.guestsTable.SetRows(guestRows(m.guests, m.selectedNode))
+					m.toggleFocus()
+				}
+			}
+			return m, nil
+
+		case "esc":
+			if m.selectedNode != "" {
+				m.selectedNode = ""
+				m.guestsTable.SetRows(guestRows(m.guests, m.selectedNode))
+			}
+			return m, nil
 		}
+
+		var cmd tea.Cmd
+		m.nodesTable, cmd = m.nodesTable.Update(msg)
+		var cmd2 tea.Cmd
+		m.guestsTable, cmd2 = m.guestsTable.Update(msg)
+		return m, tea.Batch(cmd, cmd2)
 
 	case nodesMsg:
 		m.nodes = msg
 		m.err = nil
 		m.loading = false
+		m.nodesTable.SetRows(nodeRows(m.nodes))
+		m.resizeTables()
 		return m, m.fetchGuests()
 
 	case guestsMsg:
 		m.guests = msg
+		m.guestsTable.SetRows(guestRows(m.guests, m.selectedNode))
+		m.resizeTables()
 		return m, tick()
 
 	case errMsg:
@@ -112,52 +175,97 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) toggleFocus() {
+	if m.focus == focusNodes {
+		m.focus = focusGuests
+		m.nodesTable.Blur()
+		m.guestsTable.Focus()
+	} else {
+		m.focus = focusNodes
+		m.guestsTable.Blur()
+		m.nodesTable.Focus()
+	}
+}
+
+func (m *Model) resizeTables() {
+	available := m.height - 10 // title, help, section labels, spacing
+	if available < 6 {
+		available = 6
+	}
+
+	nodesHeight := clamp(len(m.nodes), 3, available/3)
+	guestsHeight := clamp(len(m.guests), 3, available-nodesHeight)
+
+	m.nodesTable.SetHeight(nodesHeight)
+	m.guestsTable.SetHeight(guestsHeight)
+}
+
+func clamp(v, lo, hi int) int {
+	if hi < lo {
+		hi = lo
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 func (m Model) View() string {
 	title := titleStyle.Render("lazypve")
-	help := helpStyle.Render("q: quit")
+	help := helpStyle.Render("tab: switch  enter: drill down  esc: clear filter  q: quit")
 
-	var body string
-	switch {
-	case m.loading:
-		body = "connecting to Proxmox..."
-	case m.err != nil:
-		body = errStyle.Render("error: " + m.err.Error())
-	default:
-		body = m.renderNodes() + "\n\n" + m.renderGuests()
+	if m.loading {
+		return title + "\n\nconnecting to Proxmox...\n\n" + help
 	}
+	if m.err != nil {
+		return title + "\n\n" + errStyle.Render("error: "+m.err.Error()) + "\n\n" + help
+	}
+
+	nodesLabel := "Nodes"
+	guestsLabel := "Guests"
+	if m.selectedNode != "" {
+		guestsLabel = fmt.Sprintf("Guests (node: %s)", m.selectedNode)
+	}
+	if m.focus == focusNodes {
+		nodesLabel = activeLabelStyle.Render(nodesLabel)
+		guestsLabel = inactiveLabelStyle.Render(guestsLabel)
+	} else {
+		nodesLabel = inactiveLabelStyle.Render(nodesLabel)
+		guestsLabel = activeLabelStyle.Render(guestsLabel)
+	}
+
+	body := nodesLabel + "\n" + m.nodesTable.View() + "\n\n" + guestsLabel + "\n" + m.guestsTable.View()
 
 	return title + "\n\n" + body + "\n\n" + help
 }
 
-func (m Model) renderNodes() string {
-	if len(m.nodes) == 0 {
-		return "no nodes found"
+func nodeColumns() []table.Column {
+	return []table.Column{
+		{Title: "NODE", Width: 16},
+		{Title: "STATUS", Width: 9},
+		{Title: "CPU%", Width: 5},
+		{Title: "MEM", Width: 8},
+		{Title: "MAXMEM", Width: 8},
+		{Title: "UPTIME", Width: 9},
 	}
+}
 
-	header := headerStyle.Render(fmt.Sprintf("%-16s %-10s %6s %8s %8s %10s", "NODE", "STATUS", "CPU%", "MEM", "MAXMEM", "UPTIME"))
-	lines := []string{header}
-
-	for _, n := range m.nodes {
-		statusStyle := statusOtherStyle
-		if n.Status == "online" {
-			statusStyle = statusOnlineStyle
-		}
-		line := fmt.Sprintf("%-16s %s %5.1f%% %8s %8s %10s",
+func nodeRows(nodes []pve.Node) []table.Row {
+	rows := make([]table.Row, 0, len(nodes))
+	for _, n := range nodes {
+		rows = append(rows, table.Row{
 			n.Node,
-			statusStyle.Render(fmt.Sprintf("%-10s", n.Status)),
-			n.CPU*100,
+			n.Status,
+			fmt.Sprintf("%.1f%%", n.CPU*100),
 			formatBytes(n.Mem),
 			formatBytes(n.MaxMem),
 			formatUptime(n.Uptime),
-		)
-		lines = append(lines, line)
+		})
 	}
-
-	out := lines[0]
-	for _, l := range lines[1:] {
-		out += "\n" + l
-	}
-	return out
+	return rows
 }
 
 func formatBytes(b int64) string {
