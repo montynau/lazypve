@@ -14,15 +14,19 @@ import (
 // table displays them the same way and only needs to know Kind to tell
 // them apart.
 type guest struct {
-	Node   string
-	VMID   int
-	Name   string
-	Kind   string // "qemu" or "lxc"
-	Status string
-	CPU    float64
-	Mem    int64
-	MaxMem int64
-	Uptime int64
+	Node    string
+	VMID    int
+	Name    string
+	Kind    string // "qemu" or "lxc"
+	Status  string
+	CPU     float64
+	Mem     int64
+	MaxMem  int64
+	Disk    int64
+	MaxDisk int64
+	NetIn   int64
+	NetOut  int64
+	Uptime  int64
 }
 
 type guestsMsg []guest
@@ -40,7 +44,9 @@ func (m Model) fetchGuests() tea.Cmd {
 				for _, vm := range vms {
 					guests = append(guests, guest{
 						Node: n.Node, VMID: vm.VMID, Name: vm.Name, Kind: "qemu",
-						Status: vm.Status, CPU: vm.CPU, Mem: vm.Mem, MaxMem: vm.MaxMem, Uptime: vm.Uptime,
+						Status: vm.Status, CPU: vm.CPU, Mem: vm.Mem, MaxMem: vm.MaxMem,
+						Disk: vm.Disk, MaxDisk: vm.MaxDisk, NetIn: vm.NetIn, NetOut: vm.NetOut,
+						Uptime: vm.Uptime,
 					})
 				}
 			}
@@ -50,7 +56,9 @@ func (m Model) fetchGuests() tea.Cmd {
 				for _, c := range containers {
 					guests = append(guests, guest{
 						Node: n.Node, VMID: c.VMID, Name: c.Name, Kind: "lxc",
-						Status: c.Status, CPU: c.CPU, Mem: c.Mem, MaxMem: c.MaxMem, Uptime: c.Uptime,
+						Status: c.Status, CPU: c.CPU, Mem: c.Mem, MaxMem: c.MaxMem,
+						Disk: c.Disk, MaxDisk: c.MaxDisk, NetIn: c.NetIn, NetOut: c.NetOut,
+						Uptime: c.Uptime,
 					})
 				}
 			}
@@ -75,8 +83,8 @@ func (m Model) renderGuests() string {
 		return "no VMs or containers found"
 	}
 
-	header := headerStyle.Render(fmt.Sprintf("%-16s %-6s %-6s %-16s %-10s %6s %8s %10s",
-		"NODE", "TYPE", "VMID", "NAME", "STATUS", "CPU%", "MEM", "UPTIME"))
+	header := headerStyle.Render(fmt.Sprintf("%-16s %-6s %-6s %-16s %-10s %6s %8s %8s %10s %10s %10s",
+		"NODE", "TYPE", "VMID", "NAME", "STATUS", "CPU%", "MEM", "DISK", "NET IN", "NET OUT", "UPTIME"))
 	lines := []string{header}
 
 	for _, g := range m.guests {
@@ -84,7 +92,7 @@ func (m Model) renderGuests() string {
 		if g.Status == "running" {
 			statusStyle = statusOnlineStyle
 		}
-		line := fmt.Sprintf("%-16s %-6s %-6d %-16s %s %5.1f%% %8s %10s",
+		line := fmt.Sprintf("%-16s %-6s %-6d %-16s %s %5.1f%% %8s %8s %10s %10s %10s",
 			g.Node,
 			g.Kind,
 			g.VMID,
@@ -92,6 +100,9 @@ func (m Model) renderGuests() string {
 			statusStyle.Render(fmt.Sprintf("%-10s", g.Status)),
 			g.CPU*100,
 			formatBytes(g.Mem),
+			formatBytes(g.Disk),
+			formatBytes(g.NetIn),
+			formatBytes(g.NetOut),
 			formatUptime(g.Uptime),
 		)
 		lines = append(lines, line)

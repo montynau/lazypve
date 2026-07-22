@@ -15,26 +15,34 @@ type Node struct {
 
 // VM is a QEMU guest, as returned by GET /nodes/{node}/qemu.
 type VM struct {
-	VMID   int     `json:"vmid"`
-	Name   string  `json:"name"`
-	Status string  `json:"status"`
-	CPU    float64 `json:"cpu"`
-	MaxCPU int     `json:"cpus"`
-	Mem    int64   `json:"mem"`
-	MaxMem int64   `json:"maxmem"`
-	Uptime int64   `json:"uptime"`
+	VMID    int     `json:"vmid"`
+	Name    string  `json:"name"`
+	Status  string  `json:"status"`
+	CPU     float64 `json:"cpu"`
+	MaxCPU  int     `json:"cpus"`
+	Mem     int64   `json:"mem"`
+	MaxMem  int64   `json:"maxmem"`
+	Disk    int64   `json:"disk"`
+	MaxDisk int64   `json:"maxdisk"`
+	NetIn   int64   `json:"netin"`
+	NetOut  int64   `json:"netout"`
+	Uptime  int64   `json:"uptime"`
 }
 
 // Container is an LXC guest, as returned by GET /nodes/{node}/lxc.
 type Container struct {
-	VMID   int     `json:"vmid"`
-	Name   string  `json:"name"`
-	Status string  `json:"status"`
-	CPU    float64 `json:"cpu"`
-	MaxCPU int     `json:"cpus"`
-	Mem    int64   `json:"mem"`
-	MaxMem int64   `json:"maxmem"`
-	Uptime int64   `json:"uptime"`
+	VMID    int     `json:"vmid"`
+	Name    string  `json:"name"`
+	Status  string  `json:"status"`
+	CPU     float64 `json:"cpu"`
+	MaxCPU  int     `json:"cpus"`
+	Mem     int64   `json:"mem"`
+	MaxMem  int64   `json:"maxmem"`
+	Disk    int64   `json:"disk"`
+	MaxDisk int64   `json:"maxdisk"`
+	NetIn   int64   `json:"netin"`
+	NetOut  int64   `json:"netout"`
+	Uptime  int64   `json:"uptime"`
 }
 
 type response[T any] struct {

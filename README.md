@@ -60,7 +60,7 @@ Press `q` to quit.
 - [x] Node status, CPU, memory (live)
 - [x] VM and LXC listing per node
 - [ ] Drill-down / navigation between nodes and guests
-- [ ] Disk and network I/O metrics
+- [x] Disk and network I/O metrics (VM/LXC)
 - [ ] Multi-cluster support
 
 Start/stop/restart control is intentionally out of scope until the monitoring core is solid.
