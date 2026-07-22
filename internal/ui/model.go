@@ -49,7 +49,10 @@ func activeTableStyles() table.Styles {
 
 func inactiveTableStyles() table.Styles {
 	s := table.DefaultStyles()
-	s.Selected = s.Cell
+	// The row string is already padded per-cell via s.Cell before Selected
+	// wraps it, so Selected must add nothing at all — not even s.Cell's
+	// padding again, which would double up and shift the row sideways.
+	s.Selected = lipgloss.NewStyle()
 	return s
 }
 
