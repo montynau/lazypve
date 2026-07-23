@@ -4,6 +4,10 @@ import (
 	"fmt"
 )
 
+func formatRate(bytesPerSec float64) string {
+	return formatBytes(int64(bytesPerSec)) + "/s"
+}
+
 func formatUptime(seconds int64) string {
 	days := seconds / 86400
 	remaining := seconds % 86400

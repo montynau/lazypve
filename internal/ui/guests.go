@@ -25,12 +25,59 @@ type guest struct {
 	MaxMem  int64
 	Disk    int64
 	MaxDisk int64
-	NetIn   int64
-	NetOut  int64
-	Uptime  int64
+	NetIn   int64 // cumulative bytes since guest boot, per the PVE API
+	NetOut  int64 // cumulative bytes since guest boot, per the PVE API
+
+	// NetInRate/NetOutRate are bytes/sec, computed by applyNetRates from the
+	// delta against the previous poll — these are what the UI displays.
+	NetInRate  float64
+	NetOutRate float64
+
+	Uptime int64
 }
 
 type guestsMsg []guest
+
+// guestSampleKey identifies a guest across polls, for diffing NetIn/NetOut
+// into a throughput rate.
+type guestSampleKey struct {
+	Cluster string
+	Node    string
+	VMID    int
+}
+
+type guestSample struct {
+	NetIn, NetOut int64
+	At            time.Time
+}
+
+// applyNetRates fills in each guest's NetInRate/NetOutRate by diffing its
+// cumulative counters against the previous sample, and returns the new
+// sample set to diff against next time. A guest with no previous sample yet
+// (just appeared) or a counter that went backwards (guest restarted, so the
+// cumulative counter reset) reports a rate of 0 rather than a bogus spike.
+func applyNetRates(guests []guest, prev map[guestSampleKey]guestSample, now time.Time) map[guestSampleKey]guestSample {
+	next := make(map[guestSampleKey]guestSample, len(guests))
+	for i := range guests {
+		key := guestSampleKey{guests[i].Cluster, guests[i].Node, guests[i].VMID}
+		if p, ok := prev[key]; ok {
+			if elapsed := now.Sub(p.At).Seconds(); elapsed > 0 {
+				guests[i].NetInRate = netRate(guests[i].NetIn, p.NetIn, elapsed)
+				guests[i].NetOutRate = netRate(guests[i].NetOut, p.NetOut, elapsed)
+			}
+		}
+		next[key] = guestSample{NetIn: guests[i].NetIn, NetOut: guests[i].NetOut, At: now}
+	}
+	return next
+}
+
+func netRate(curr, prev int64, elapsedSeconds float64) float64 {
+	delta := curr - prev
+	if delta < 0 {
+		return 0
+	}
+	return float64(delta) / elapsedSeconds
+}
 
 func (m Model) fetchGuests() tea.Cmd {
 	nodes := m.nodes
@@ -93,27 +140,41 @@ func guestColumns(multiCluster bool) []table.Column {
 	}
 	return append(cols,
 		table.Column{Title: "NODE", Width: 14},
-		table.Column{Title: "TYPE", Width: 4},
+		table.Column{Title: "TYPE", Width: 6},
 		table.Column{Title: "VMID", Width: 5},
 		table.Column{Title: "NAME", Width: 16},
 		table.Column{Title: "STATUS", Width: 9},
 		table.Column{Title: "CPU%", Width: 5},
 		table.Column{Title: "MEM", Width: 8},
 		table.Column{Title: "DISK", Width: 8},
-		table.Column{Title: "NET IN", Width: 9},
-		table.Column{Title: "NET OUT", Width: 9},
+		table.Column{Title: "NET IN", Width: 11},
+		table.Column{Title: "NET OUT", Width: 11},
 		table.Column{Title: "UPTIME", Width: 9},
 	)
 }
 
+// filterGuests restricts guests to a single node (drill-down). A zero filter
+// means "show every guest".
+func filterGuests(guests []guest, filter nodeKey) []guest {
+	if filter.Node == "" {
+		return guests
+	}
+	filtered := make([]guest, 0, len(guests))
+	for _, g := range guests {
+		if g.Cluster == filter.Cluster && g.Node == filter.Node {
+			filtered = append(filtered, g)
+		}
+	}
+	return filtered
+}
+
 // guestRows builds table rows from guests, optionally restricted to a single
-// node (drill-down). A zero filter means "show every guest".
+// node (drill-down), purely so table.Model can clamp cursor movement against
+// the right row count — the actual display goes through renderGuestsPanel.
 func guestRows(guests []guest, filter nodeKey, multiCluster bool) []table.Row {
+	guests = filterGuests(guests, filter)
 	rows := make([]table.Row, 0, len(guests))
 	for _, g := range guests {
-		if filter.Node != "" && (g.Cluster != filter.Cluster || g.Node != filter.Node) {
-			continue
-		}
 		row := table.Row{}
 		if multiCluster {
 			row = append(row, g.Cluster)

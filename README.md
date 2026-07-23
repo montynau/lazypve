@@ -10,7 +10,7 @@ It's read-only by design for now: lazypve won't start, stop, or touch anything o
 
 ## Status
 
-Live node status, a full VM/LXC listing (CPU%, memory, disk, network, uptime), interactive drill-down navigation, and multi-cluster support are all working. See [Roadmap](#roadmap) for what's tracked next.
+Live node status, a full VM/LXC listing (CPU%, memory, live network throughput, uptime), interactive drill-down navigation, sortable columns, and multi-cluster support (with a warning if one cluster drops out) are all working. See [Roadmap](#roadmap) for what's tracked next.
 
 ## Requirements
 
@@ -73,15 +73,18 @@ go run ./cmd/lazypve
 ./lazypve
 ```
 
-`tab` switches focus between the nodes and guests tables, `↑`/`↓` (or `j`/`k`) move the selection, `enter` drills into the selected node's guests, `esc` clears that filter, `q` quits.
+`tab` switches focus between the nodes and guests tables, `↑`/`↓` (or `j`/`k`) move the selection, `enter` drills into the selected node's guests, `q` quits.
+
+`]`/`[` sort the focused table by the next/previous column — press the same key again to reverse direction before it moves on to the next column. `esc` resets whichever of these is active on the focused table: the drill-down filter, its sort, or both at once.
 
 ## Roadmap
 
 - [x] Node status, CPU, memory (live)
 - [x] VM and LXC listing per node
 - [x] Drill-down / navigation between nodes and guests
-- [x] Disk and network I/O metrics (VM/LXC, cumulative totals — not live throughput yet)
-- [x] Multi-cluster support
+- [x] Disk usage and live network throughput (VM/LXC)
+- [x] Multi-cluster support, with a warning if a cluster drops out
+- [x] Sortable columns
 
 Start/stop/restart control is intentionally out of scope until the monitoring core is solid.
 

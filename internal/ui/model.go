@@ -29,32 +29,9 @@ var (
 	errStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("196"))
 
-	activeLabelStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("205"))
-
-	inactiveLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
+	warnStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214"))
 )
-
-// bubbles/table always highlights whatever row the cursor sits on, even when
-// the table isn't focused — which looks like two rows are "selected" at
-// once. We swap in a no-op Selected style for the blurred table so only the
-// focused table's cursor row stands out.
-func activeTableStyles() table.Styles {
-	s := table.DefaultStyles()
-	s.Selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	return s
-}
-
-func inactiveTableStyles() table.Styles {
-	s := table.DefaultStyles()
-	// The row string is already padded per-cell via s.Cell before Selected
-	// wraps it, so Selected must add nothing at all — not even s.Cell's
-	// padding again, which would double up and shift the row sideways.
-	s.Selected = lipgloss.NewStyle()
-	return s
-}
 
 type focusArea int
 
@@ -82,7 +59,16 @@ type nodeKey struct {
 	Node    string
 }
 
-type nodesMsg []node
+// nodesMsg carries the nodes that were fetched successfully plus, per
+// cluster, the error from any cluster that failed this round — a cluster
+// timing out shouldn't blank the whole UI when others are still reachable.
+// clusterErrs only holds entries for clusters that failed; a cluster that
+// recovers simply stops appearing in it on the next poll.
+type nodesMsg struct {
+	nodes       []node
+	clusterErrs map[string]error
+}
+
 type errMsg struct{ err error }
 type tickMsg time.Time
 
@@ -94,6 +80,21 @@ type Model struct {
 	nodes    []node
 	guests   []guest
 	selected nodeKey // zero value = no drill-down filter
+
+	// clusterErrors holds the error from any cluster that failed its most
+	// recent node fetch, so a down cluster can be flagged in the UI instead
+	// of just silently vanishing from the aggregated node/guest lists.
+	clusterErrors map[string]error
+
+	// prevGuestSample holds each guest's cumulative NetIn/NetOut from the
+	// last poll, so the next poll can diff against it to show live
+	// throughput instead of Proxmox's cumulative-since-boot counters.
+	prevGuestSample map[guestSampleKey]guestSample
+
+	// nodesSort/guestsSort are indices into a linear (column, direction)
+	// cycle — see nextSortState. -1 means no explicit sort is active.
+	nodesSort  int
+	guestsSort int
 
 	nodesTable  table.Model
 	guestsTable table.Model
@@ -109,12 +110,10 @@ func New(clients map[string]*pve.Client) Model {
 		table.WithColumns(nodeColumns(multi)),
 		table.WithFocused(true),
 		table.WithHeight(6),
-		table.WithStyles(activeTableStyles()),
 	)
 	guestsTable := table.New(
 		table.WithColumns(guestColumns(multi)),
 		table.WithHeight(10),
-		table.WithStyles(inactiveTableStyles()),
 	)
 
 	return Model{
@@ -123,6 +122,8 @@ func New(clients map[string]*pve.Client) Model {
 		nodesTable:  nodesTable,
 		guestsTable: guestsTable,
 		focus:       focusNodes,
+		nodesSort:   -1,
+		guestsSort:  -1,
 	}
 }
 
@@ -141,11 +142,11 @@ func (m Model) fetchNodes() tea.Cmd {
 		defer cancel()
 
 		var nodes []node
-		var errs []error
+		clusterErrs := map[string]error{}
 		for name, client := range clients {
 			raw, err := client.GetNodes(ctx)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", name, err))
+				clusterErrs[name] = err
 				continue
 			}
 			for _, n := range raw {
@@ -156,7 +157,11 @@ func (m Model) fetchNodes() tea.Cmd {
 			}
 		}
 
-		if len(nodes) == 0 && len(errs) > 0 {
+		if len(nodes) == 0 && len(clusterErrs) > 0 {
+			errs := make([]error, 0, len(clusterErrs))
+			for name, err := range clusterErrs {
+				errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			}
 			return errMsg{errors.Join(errs...)}
 		}
 
@@ -166,7 +171,7 @@ func (m Model) fetchNodes() tea.Cmd {
 				cmp.Compare(a.Node, b.Node),
 			)
 		})
-		return nodesMsg(nodes)
+		return nodesMsg{nodes: nodes, clusterErrs: clusterErrs}
 	}
 }
 
@@ -194,25 +199,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "enter":
 			if m.focus == focusNodes {
-				if idx := m.nodesTable.Cursor(); idx >= 0 && idx < len(m.nodes) {
-					n := m.nodes[idx]
+				nodes := m.displayNodes()
+				if idx := m.nodesTable.Cursor(); idx >= 0 && idx < len(nodes) {
+					n := nodes[idx]
 					m.selected = nodeKey{Cluster: n.Cluster, Node: n.Node}
-					m.nodesTable.SetRows(nodeRows(m.nodes, m.selected, m.multiCluster()))
-					m.guestsTable.SetRows(guestRows(m.guests, m.selected, m.multiCluster()))
+					m.nodesTable.SetRows(nodeRows(nodes, m.selected, m.multiCluster()))
+					m.guestsTable.SetRows(guestRows(m.displayGuests(), m.selected, m.multiCluster()))
 					m.toggleFocus()
 				}
 			}
 			return m, nil
 
 		case "esc":
+			focus := m.focus
 			if m.selected.Node != "" {
 				m.selected = nodeKey{}
-				m.nodesTable.SetRows(nodeRows(m.nodes, m.selected, m.multiCluster()))
-				m.guestsTable.SetRows(guestRows(m.guests, m.selected, m.multiCluster()))
+				m.nodesTable.SetRows(nodeRows(m.displayNodes(), m.selected, m.multiCluster()))
+				m.guestsTable.SetRows(guestRows(m.displayGuests(), m.selected, m.multiCluster()))
 				if m.focus == focusGuests {
 					m.toggleFocus()
 				}
 			}
+			// Reset whichever table the user was looking at when they hit
+			// esc, not m.focus — clearing the filter above may have already
+			// flipped focus back to the nodes table.
+			switch {
+			case focus == focusNodes && m.nodesSort != -1:
+				m.nodesSort = -1
+				m.nodesTable.SetRows(nodeRows(m.displayNodes(), m.selected, m.multiCluster()))
+			case focus == focusGuests && m.guestsSort != -1:
+				m.guestsSort = -1
+				m.guestsTable.SetRows(guestRows(m.displayGuests(), m.selected, m.multiCluster()))
+			}
+			return m, nil
+
+		case "]":
+			m.cycleSort(1)
+			return m, nil
+
+		case "[":
+			m.cycleSort(-1)
 			return m, nil
 		}
 
@@ -223,16 +249,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, cmd2)
 
 	case nodesMsg:
-		m.nodes = msg
+		m.nodes = msg.nodes
+		m.clusterErrors = msg.clusterErrs
 		m.err = nil
 		m.loading = false
-		m.nodesTable.SetRows(nodeRows(m.nodes, m.selected, m.multiCluster()))
+		m.nodesTable.SetRows(nodeRows(m.displayNodes(), m.selected, m.multiCluster()))
 		m.resizeTables()
 		return m, m.fetchGuests()
 
 	case guestsMsg:
 		m.guests = msg
-		m.guestsTable.SetRows(guestRows(m.guests, m.selected, m.multiCluster()))
+		m.prevGuestSample = applyNetRates(m.guests, m.prevGuestSample, time.Now())
+		m.guestsTable.SetRows(guestRows(m.displayGuests(), m.selected, m.multiCluster()))
 		m.resizeTables()
 		return m, tick()
 
@@ -248,24 +276,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// cycleSort advances the sort state of whichever table is focused and
+// resorts+redisplays it immediately. Fresh data from the next poll is
+// resorted the same way in Update's nodesMsg/guestsMsg handling, so the
+// chosen order survives refreshes instead of reverting to fetch order.
+func (m *Model) cycleSort(dir int) {
+	if m.focus == focusNodes {
+		m.nodesSort = nextSortState(m.nodesSort, dir, len(nodeSortFields(m.multiCluster())))
+		m.nodesTable.SetRows(nodeRows(m.displayNodes(), m.selected, m.multiCluster()))
+	} else {
+		m.guestsSort = nextSortState(m.guestsSort, dir, len(guestSortFields(m.multiCluster())))
+		m.guestsTable.SetRows(guestRows(m.displayGuests(), m.selected, m.multiCluster()))
+	}
+}
+
+// displayNodes/displayGuests return m.nodes/m.guests sorted per the current
+// sort state, without mutating the underlying slice — m.nodes/m.guests
+// always stay in natural fetch order so clearing the sort (state -1) has an
+// original order to fall back to instead of being stuck however it was last
+// left.
+func (m Model) displayNodes() []node {
+	return sortedNodes(m.nodes, m.nodesSort, m.multiCluster())
+}
+
+func (m Model) displayGuests() []guest {
+	return sortedGuests(m.guests, m.guestsSort, m.multiCluster())
+}
+
 func (m *Model) toggleFocus() {
 	if m.focus == focusNodes {
 		m.focus = focusGuests
 		m.nodesTable.Blur()
-		m.nodesTable.SetStyles(inactiveTableStyles())
 		m.guestsTable.Focus()
-		m.guestsTable.SetStyles(activeTableStyles())
 	} else {
 		m.focus = focusNodes
 		m.guestsTable.Blur()
-		m.guestsTable.SetStyles(inactiveTableStyles())
 		m.nodesTable.Focus()
-		m.nodesTable.SetStyles(activeTableStyles())
 	}
 }
 
 func (m *Model) resizeTables() {
-	available := m.height - 10 // title, help, section labels, spacing
+	available := m.height - 12 // title, help, spacing, and each panel's border+header lines
+	if len(m.clusterErrors) > 0 {
+		available-- // room for the cluster-unreachable warning line
+	}
 	if available < 6 {
 		available = 6
 	}
@@ -273,8 +327,13 @@ func (m *Model) resizeTables() {
 	nodesHeight := clamp(len(m.nodes), 3, available/3)
 	guestsHeight := clamp(len(m.guests), 3, available-nodesHeight)
 
-	m.nodesTable.SetHeight(nodesHeight)
-	m.guestsTable.SetHeight(guestsHeight)
+	// table.Model.SetHeight(h) reserves one line for its own header internally
+	// (viewport.Height = h - headerHeight), and Height() returns that already-
+	// reduced value. We read Height() back in render.go as "how many data rows
+	// to draw," so pad by 1 here to cancel that reservation out — otherwise
+	// every panel silently renders one row short of what resizeTables intended.
+	m.nodesTable.SetHeight(nodesHeight + 1)
+	m.guestsTable.SetHeight(guestsHeight + 1)
 }
 
 func clamp(v, lo, hi int) int {
@@ -301,40 +360,56 @@ func (m Model) View() string {
 		return title + "\n\n" + errStyle.Render("error: "+m.err.Error()) + "\n\n" + help
 	}
 
-	nodesLabel := "Nodes"
-	shown := len(m.guestsTable.Rows())
-	guestsLabel := fmt.Sprintf("Guests — %d", shown)
-	if m.selected.Node != "" {
-		if m.multiCluster() {
-			guestsLabel = fmt.Sprintf("Guests — %d of %d, filtered to node %q on cluster %q", shown, len(m.guests), m.selected.Node, m.selected.Cluster)
-		} else {
-			guestsLabel = fmt.Sprintf("Guests — %d of %d, filtered to node %q", shown, len(m.guests), m.selected.Node)
-		}
-	}
-	if m.focus == focusNodes {
-		nodesLabel = activeLabelStyle.Render(nodesLabel)
-		guestsLabel = inactiveLabelStyle.Render(guestsLabel)
-	} else {
-		nodesLabel = inactiveLabelStyle.Render(nodesLabel)
-		guestsLabel = activeLabelStyle.Render(guestsLabel)
-	}
+	body := renderNodesPanel(m) + "\n\n" + renderGuestsPanel(m)
 
-	body := nodesLabel + "\n" + m.nodesTable.View() + "\n\n" + guestsLabel + "\n" + m.guestsTable.View()
-
+	if warn := m.clusterWarning(); warn != "" {
+		return title + "\n" + warn + "\n\n" + body + "\n\n" + help
+	}
 	return title + "\n\n" + body + "\n\n" + help
+}
+
+// clusterWarning summarizes any cluster that failed its last node fetch, so
+// a down cluster is visible instead of just silently missing from the
+// aggregated node/guest lists. Empty when every configured cluster is
+// reachable (which is also the only possible state for a single-cluster
+// setup — see fetchNodes: an all-clusters failure is reported as m.err
+// instead, since there'd be nothing left to show).
+func (m Model) clusterWarning() string {
+	if len(m.clusterErrors) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(m.clusterErrors))
+	for name := range m.clusterErrors {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	if len(names) == 1 {
+		return warnStyle.Render(fmt.Sprintf("⚠ cluster %q unreachable", names[0]))
+	}
+	return warnStyle.Render(fmt.Sprintf("⚠ %d clusters unreachable: %s", len(names), strings.Join(names, ", ")))
 }
 
 // helpText only lists actions that would actually do something right now:
 // "enter" only applies while the nodes table is focused, "esc" only applies
-// while a node filter is active.
+// while a node filter and/or the focused table's sort is active.
 func (m Model) helpText() string {
-	parts := []string{"tab: switch"}
+	parts := []string{"tab: switch", "[ ]: sort"}
 	if m.focus == focusNodes {
 		parts = append(parts, "enter: filter by node")
 	}
-	if m.selected.Node != "" {
+
+	filterActive := m.selected.Node != ""
+	sortActive := (m.focus == focusNodes && m.nodesSort != -1) || (m.focus == focusGuests && m.guestsSort != -1)
+	switch {
+	case filterActive && sortActive:
+		parts = append(parts, "esc: reset filter & sort")
+	case filterActive:
 		parts = append(parts, "esc: show all guests")
+	case sortActive:
+		parts = append(parts, "esc: clear sort")
 	}
+
 	parts = append(parts, "q: quit")
 	return strings.Join(parts, "  ")
 }
